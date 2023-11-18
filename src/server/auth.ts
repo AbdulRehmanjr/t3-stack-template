@@ -4,10 +4,13 @@ import {
   type DefaultSession,
   type NextAuthOptions,
 } from "next-auth";
-import DiscordProvider from "next-auth/providers/discord";
 
-import { env } from "@/env.mjs";
-import { db } from "@/server/db";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { db } from "./db";
+import { env } from "../env.mjs";
+import { api } from "@/trpc/server";
+import { compare } from "bcrypt";
+import { randomUUID } from "crypto";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -16,18 +19,21 @@ import { db } from "@/server/db";
  * @see https://next-auth.js.org/getting-started/typescript#module-augmentation
  */
 declare module "next-auth" {
-  interface Session extends DefaultSession {
+  interface Session extends DefaultSession, User {
     user: {
-      id: string;
-      // ...other properties
-      // role: UserRole;
+      id: string
+      paypal_token: string
+      role: string
     } & DefaultSession["user"];
   }
 
-  // interface User {
-  //   // ...other properties
-  //   // role: UserRole;
-  // }
+
+  interface User {
+    // ...other properties
+    paypal_token: string
+    role: string;
+  }
+
 }
 
 /**
@@ -37,20 +43,80 @@ declare module "next-auth" {
  */
 export const authOptions: NextAuthOptions = {
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-      },
-    }),
+    session({ session, user, token }) {
+
+      const { email, sub, paypal_token, role, iat, exp, jti } = token
+      return {
+        ...session,
+        user: {
+          ...session.user,
+          email: email,
+          role: role,
+          paypal_token: paypal_token
+        }
+      }
+    },
+    jwt({ token, user }) {
+      if (user) {
+        token.paypal_token = user.paypal_token
+        token.email = user.email
+        token.role = user.role
+        return token
+      }
+      return token
+    },
   },
+
   adapter: PrismaAdapter(db),
+  session: {
+    strategy: "jwt"
+  },
+  pages: {
+    signIn: '/'
+  },
+  secret: "POKOq/ooMmBaUcsKQfOeWkhXzwo5CTQ/vTiCARhS1vQ=",
   providers: [
-    DiscordProvider({
-      clientId: env.DISCORD_CLIENT_ID,
-      clientSecret: env.DISCORD_CLIENT_SECRET,
-    }),
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        userName: { label: "UserName", type: "text", placeholder: "Abdul Rehman" },
+        password: { label: "Password", type: "password" }
+      },
+      async authorize(credentials) {
+
+        if (!credentials?.userName || !credentials?.password)
+          return null
+        
+        const userInfo = null
+        //await api.seller.sellerInfo.query({ userName: credentials.userName })
+
+        if (!userInfo)
+          return null
+        
+          //userInfo.password
+        const result: boolean = await compare(credentials.password, "")
+
+        if (!result)
+          return null
+        
+        const paypal_token = null
+        //await api.paypal.getAuthToken.query()
+
+        if (!paypal_token)
+          return null
+        
+        return {
+          id: randomUUID().toString(),
+          email: credentials?.userName,
+          role: "Seller",
+          paypal_token: paypal_token
+        }
+      }
+    })
+    // DiscordProvider({
+    //   clientId: env.DISCORD_CLIENT_ID,
+    //   clientSecret: env.DISCORD_CLIENT_SECRET,
+    // }),
     /**
      * ...add more providers here.
      *
@@ -62,6 +128,7 @@ export const authOptions: NextAuthOptions = {
      */
   ],
 };
+
 
 /**
  * Wrapper for `getServerSession` so that you don't need to import the `authOptions` in every file.
